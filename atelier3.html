@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hurricanes</title>
+    <style>
+        .controlsContainer {
+            display: grid;
+            grid-template-columns: 290px 200px auto;
+        }
+
+        .rangeContainer {
+            display: grid;
+            grid-template-columns: 50px 30px auto 30px 50px;
+            align-items: center;
+        }
+
+        .checkboxContainer {
+            display: grid;
+            grid-template-columns: 20px auto 20px auto 20px auto;
+            align-items: center;
+        }
+
+        #graphContainer {
+            width: 100%;
+            height: 820px;
+            background-color: lightgray;
+        }
+    </style>
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
+</head>
+
+<body>
+    <div style="margin:auto; width:96%;text-align: center;">
+        <div id="graphContainer" style="margin:auto;"></div>
+    </div>
+    <div>
+    </div>
+    <div class="controlsContainer">
+        <fieldset>
+            <legend>Style</legend>
+            <input type="radio" name="graphStyle" id="bars" value="bars" checked>
+            <label for="bars">Bâtonnets</label>
+            <input type="radio" name="graphStyle" id="regions" value="regions">
+            <label for="regions">Régions</label>
+            <input type="radio" name="graphStyle" id="curves" value="curves">
+            <label for="curves">Courbes</label>
+        </fieldset>
+        <fieldset>
+            <legend>Type</legend>
+            <div class="checkboxContainer">
+                <input type="checkbox" id="showStorm" checked>
+                <div style="background-color: green;">&nbsp;</div>
+                <input type="checkbox" id="showHurricane_12" checked>
+                <div style="background-color: orange;">&nbsp;</div>
+                <input type="checkbox" id="showHurricane_345" checked>
+                <div style="background-color: red;">&nbsp;</div>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend>
+                Années
+            </legend>
+            <div class="rangeContainer">
+                <input type="text" id="start" value="1950">
+                <span>&nbsp;</span>
+                <div id="slider-range"></div>
+                <span>&nbsp;</span>
+                <input type="text" id="end" value="2023">
+            </div>
+        </fieldset>
+    </div>
+    <hr>
+</body>
+
+</html>
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+<script src="https://www.gstatic.com/charts/loader.js"></script>
+
+<script defer>
+    google.charts.load('current', { packages: ['corechart'] });
+
+    const serverHost = "https://api-server-2.glitch.me";
+    const hurricanes_API = "/api/hurricanes";
+    const svgns = "http://www.w3.org/2000/svg";
+
+    let hurricanesData;
+    let dataRows;
+    let graphStyle = "bars";
+    let showStorm = true;
+    let showHurricane_12 = true;
+    let showHurricane_345 = true;
+    let viewPortMaxUnitX = 500;
+    let viewPortMaxUnitY = 240;
+    let viewport = null;
+    let verticalScale = 5;
+    let yearWidth = 6.5;
+    let verticalOffset = 5;
+    let horizontalOffset = 10;
+    let mouseIsDown = false;
+    var timeId = null;
+    let graphData = [];
+    var graphOptions;
+    let storm;
+    let hurricaneCat12;
+    let hurricaneCat345;
+
+    init_UI();
+    function init_UI() {
+        google.charts.load('current', { 'packages': ['corechart'] });
+        google.charts.setOnLoadCallback(drawGraph());
+
+        window.addEventListener('resize', () => {
+            clearTimeout(timeId);
+            timeId = setTimeout(drawGraph, 200);
+        });
+
+        $("input[name='graphStyle']").on('change', function () {
+            graphStyle = $("input[name='graphStyle']:checked").val();
+            drawGraph();
+        });
+
+        $("#slider-range").slider({
+            range: true,
+            min: 1950,
+            max: 2023,
+            values: [1950, 2023],
+            slide: function (event, ui) {
+                $("#start").val(ui.values[0]);
+                $("#end").val(ui.values[1]);
+            }
+        });
+
+        $("#slider-range").on('pointerdown', e => { mouseIsDown = true; e.target.setPointerCapture(e.pointerId); })
+        $("body").on('pointerup', e => {
+            if (mouseIsDown) drawGraph();
+            e.target.releasePointerCapture(e.pointerId);
+            mouseIsDown = false;
+        });
+
+        $("#start").on("change", () => { $("#slider-range").slider('values', 0, $("#start").val()); drawGraph(); })
+        $("#end").on("change", () => { $("#slider-range").slider('values', 1, $("#end").val()); drawGraph(); })
+
+        $("#showStorm").on("change", () => { showStorm = $("#showStorm").is(':checked'); drawGraph(); })
+        $("#showHurricane_12").on("change", () => { showHurricane_12 = $("#showHurricane_12").is(':checked'); drawGraph(); })
+        $("#showHurricane_345").on("change", () => { showHurricane_345 = $("#showHurricane_345").is(':checked'); drawGraph(); })
+    }
+
+    async function drawGraph() {
+        $("#viewport").empty();
+        dataRows = [];
+        hurricanesData = await GetHurricanesData();
+        graphOptions = {
+            title: "Historique des tempêtes de l'Atlantique entre " + hurricanesData[0].Year + " et " + hurricanesData[hurricanesData.length - 1].Year,
+            titleTextStyle: { fontSize: '32', color: 'black' },
+            legend: { position: 'top' },
+            hAxis: {
+                format: '####',
+                textStyle: { fontSize: 14 },
+            },
+            vAxis: {
+                textStyle: { fontSize: 14 },
+                viewWindow: {
+                    max: 32,
+                    min: 0,
+                },
+                gridlines: { count: 16 }
+            },
+            chartArea: { left: 100, top: 100, right: 50, bottom: 200 },
+            colors: ['#008000', '#FFA500', '#FF0000']
+        };
+        storm = $('#showStorm').prop('checked');
+        hurricaneCat12 = $('#showHurricane_12').prop('checked');
+        hurricaneCat345 = $('#showHurricane_345').prop('checked');
+        graphData = [];
+        let header = ['Dates'];
+        if (storm) header.push('Tempêtes Tropicales');
+        if (hurricaneCat12) header.push('Ouragans de catégorie 1 et 2');
+        if (hurricaneCat345) header.push('Ouragans de catégorie 3,4,5');
+        graphData.push(header);
+
+        hurricanesData.forEach((value) => {
+            let row = [parseInt(value.Year)];
+            if (storm) {
+                row.push(value.Storm);
+            }
+            if (hurricaneCat12) {
+                let values = value.Cat1 + value.Cat2;
+                row.push(values);
+            }
+            if (hurricaneCat345) {
+                let values = value.Cat3 + value.Cat4 + value.Cat5;
+                row.push(values);
+            }
+            graphData.push(row);
+        });
+
+        var data = google.visualization.arrayToDataTable(graphData);
+
+        let graphwidth = viewPortMaxUnitX - horizontalOffset;
+        let nbYears = hurricanesData.length;
+        if (nbYears > 0) {
+            yearWidth = graphwidth / nbYears;
+            switch (graphStyle) {
+                case "bars": drawCharts(data); break;
+                case "regions": drawLines(data); break;
+                case "curves": drawCurves(data); break;
+            }
+        }
+        hurricanesData = [];
+    };
+
+    function drawCurves(data) {
+        var chartCurves = new google.visualization.LineChart($('#graphContainer')[0]);
+        chartCurves.draw(data, graphOptions);
+    }
+    function drawLines(data) {
+        var chartLines = new google.visualization.AreaChart($('#graphContainer')[0]);
+        chartLines.draw(data, graphOptions);
+    }
+    function drawCharts(data) {
+        var chartBars = new google.visualization.ColumnChart($('#graphContainer')[0]);
+        chartBars.draw(data, graphOptions);
+    }
+
+    function GetHurricanesData() {
+        return new Promise(resolve => {
+            $.ajax({
+                url: serverHost + hurricanes_API + `?Year.start=${$("#start").val()}&Year.end=${$("#end").val()}`,
+                type: 'GET',
+                success: data => { resolve(data); },
+                error: xhr => { console.log(xhr); resolve(false); }
+            });
+        });
+    }
+</script>
